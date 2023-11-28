@@ -13,10 +13,10 @@ train_size = len(dataset['train']['text'])
 val_size = len(dataset['validation']['text'])
 dataset_size = train_size + val_size
 
-subset_perc = 5 // 10
+subset_percentage = 100
 
-train_data = ' '.join(dataset['train']['text'][:train_size * subset_perc])
-val_data = ' '.join(dataset['validation']['text'][:val_size * subset_perc])
+train_data = ' '.join(dataset['train']['text'][:train_size * subset_percentage // 100])
+val_data = ' '.join(dataset['validation']['text'][:val_size * subset_percentage // 100])
 
 print(f"Training dataset has {len(train_data)} characters")
 print(f"Validation dataset has {len(val_data)} characters")
