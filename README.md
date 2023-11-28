@@ -12,9 +12,9 @@ The `train.py` file sets default hyperparameters and variables, and can be run w
 
 The first step is to prepare the data. By default, the TinyStories dataset is used. Run the following command to prepare the data:
 
-\`\`\`bash
+```bash
 python data/tiny_stories/prepare.py
-\`\`\`
+```
 
 This command creates `meta.pkl`, `train.bin`, and `val.bin` in the `data/tiny_stories/` directory. If the TinyStories dataset is too large, you can set the percentage of the dataset to use by adjusting the `subset_percentage` variable within `prepare.py` (which is set to 100 by default).
 
@@ -22,15 +22,15 @@ This command creates `meta.pkl`, `train.bin`, and `val.bin` in the `data/tiny_st
 
 Next, train the model using the following command:
 
-\`\`\`bash
+```bash
 python train.py --config_file config/tiny_stories.py
-\`\`\`
+```
 
 This script supports CPU, CUDA, and MPS devices. The default device is CPU, but you can change this by specifying the `--device` flag. For example, to use CUDA, run:
 
-\`\`\`bash
+```bash
 python train.py --config_file config/tiny_stories --device cuda
-\`\`\`
+```
 
 Please note that `torch.compile` currently does not work with MPS.
 
@@ -40,6 +40,6 @@ As the model trains, it saves checkpoints to the `out-tiny-stories` directory.
 
 Once you have trained the model, you can generate samples from it using the following command:
 
-\`\`\`bash
+```bash
 python sample.py --out_dir out-tiny-stories
-\`\`\`
+```
