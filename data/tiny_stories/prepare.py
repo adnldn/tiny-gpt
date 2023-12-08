@@ -5,6 +5,7 @@ from tokenizers.models import BPE
 from tokenizers.trainers import BpeTrainer
 from tokenizers.pre_tokenizers import Whitespace
 import pickle
+import argparse
 
 
 class SimpleEncoding:
@@ -34,20 +35,18 @@ class BPETokeniserWrapper:
     
     def decode(self, token_ids):
         return self.tokeniser.decode(token_ids)
+    
 
 dataset = load_dataset('roneneldan/TinyStories')
 
 train_size = len(dataset['train'])
 val_size = len(dataset['validation'])
 dataset_size = train_size + val_size
-
 data_percentage = 100
-
 sub_train_size = int(len(dataset['train']) * (data_percentage / 100))
 sub_val_size = int(len(dataset['validation']) * (data_percentage / 100))
 train_indices = np.random.choice(train_size, sub_train_size, replace=False).tolist()
 val_indices = np.random.choice(val_size, sub_val_size, replace=False).tolist()
-
 train_subset = dataset['train'].select(train_indices)
 val_subset = dataset['validation'].select(val_indices)
 
@@ -55,7 +54,11 @@ if data_percentage < 100:
     dataset = {'train': train_subset, 'validation': val_subset}
 
 if __name__ == '__main__':
-    encoding_type = 'simple'
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--encoding_type', type=str, default='simple')
+    args = parser.parse_args()
+    encoding_type = args.encoding_type
+    
     if encoding_type == 'simple':
         # simple character level encoding
         chars = [chr(i) for i in range(256)]
