@@ -1,49 +1,62 @@
 # utilities
-import os
+import random
 import time
 import pickle
 from contextlib import nullcontext
+import importlib
+from pathlib import Path
 # built-ins
-import numpy as np
+# import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
 from torch.optim.lr_scheduler import LambdaLR, CosineAnnealingLR
+# from tokenizers import Tokenizer
 # custom modules
 from model import GPT, GPTConfig
 from config_parser import parse_config, override_globals
-
     
+
 class LLM_Dataset(Dataset):
-    def __init__(self, data_path, block_size):
-        self.data = np.memmap(data_path, dtype=np.uint16, mode='r')
+    def __init__(self, data, block_size, tokeniser):
+        self.data = data
         self.block_size = block_size
+        self.tokeniser = tokeniser
 
     def __len__(self):
-        return len(self.data) - self.block_size
+        return len(self.data)
     
     def __getitem__(self, idx):
-        x = torch.from_numpy(self.data[idx : idx + self.block_size].astype(np.int64))
-        y = torch.from_numpy(self.data[idx + 1 : idx + 1 + self.block_size].astype(np.int64))
-        return x, y
+        story = self.data[idx]
+        encoded_story = self.tokeniser.encode(story)
+        next_idx = (idx + 1) % len(self.data)
+        while len(encoded_story) < self.block_size + 1 :
+            next_story = self.data[next_idx]
+            encoded_next_story = self.tokeniser.encode(next_story)
+            encoded_story += encoded_next_story
+            next_idx = (next_idx + 1) % len(self.data)
+        start_idx = random.randint(0, len(encoded_story) - self.block_size - 1)
+        x = encoded_story[start_idx : start_idx + self.block_size]
+        y = encoded_story[start_idx + 1 : start_idx + 1 + self.block_size]
+        assert len(x) == len(y), "x and y are not the same length"
+        return torch.tensor(x, dtype=torch.long), torch.tensor(y, dtype=torch.long)
     
 
 class ModelInitialiser:
     def __init__(self, config):
         self.config = config
-        data_dir = os.path.join('data', self.config['dataset'])
-        self.meta_path = os.path.join(data_dir, 'meta.pkl')
         keys = ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size'] #  default vocab size atm
         self.model_args = {k: self.config[k] for k in keys}
         print('\n'.join([f'{k}: {v}' for k, v in self.model_args.items()]))
         
     def init_model(self):
         run_time_dict = None
-        if os.path.exists(self.meta_path):
-            with open(self.meta_path, 'rb') as f:
-                meta = pickle.load(f)
-            meta_vocab_size = meta.get('vocab_size', self.model_args['vocab_size'])
-            self.model_args['vocab_size'] = meta_vocab_size
-            self.config['vocab_size'] = meta_vocab_size
+        tokeniser_path = Path('data') / self.config['dataset_name'] / 'tokeniser.pkl'
+        with open(tokeniser_path, 'rb') as f:
+            tokeniser = pickle.load(f)
+            
+        vocab_size = tokeniser.get_vocab_size()
+        self.model_args['vocab_size'] = vocab_size
+        self.config['vocab_size'] = vocab_size
         print(f"vocab_size {self.model_args['vocab_size']}\n")
 
         if self.config['init_from'] == 'scratch':
@@ -52,7 +65,7 @@ class ModelInitialiser:
             model = GPT(gpt_config)
         elif self.config['init_from'] == 'resume':
             # load checkpoint data
-            checkpoint_path = os.path.join(self.config['out_dir'], 'checkpoint.pt')
+            checkpoint_path = Path(self.config['out_dir']) / 'checkpoint.pt'
             checkpoint = torch.load(checkpoint_path, map_location=self.config['device'])
             run_time_dict = {
                 'checkpoint': checkpoint,
@@ -103,12 +116,14 @@ def setup_schedulers(optimiser, config):
     min_scheduler = LambdaLR(optimiser, min_lambda) #  outputs lr. 
     return warmup_scheduler, decay_scheduler, min_scheduler
 
-    
 
 def load_data(config):
-    data_dir = os.path.join('data', config['dataset'])
-    train_dataset = LLM_Dataset(os.path.join(data_dir, 'train.bin'), config['block_size'])
-    val_dataset = LLM_Dataset(os.path.join(data_dir, 'val.bin'), config['block_size'])
+    tokeniser_path = Path('data') / config['dataset_name'] / 'tokeniser.pkl'
+    with open(tokeniser_path, 'rb') as f:
+        tokeniser = pickle.load(f)
+
+    train_dataset = LLM_Dataset(dataset['train']['text'], config['block_size'], tokeniser)
+    val_dataset = LLM_Dataset(dataset['validation']['text'], config['block_size'], tokeniser)
 
     train_loader = DataLoader(train_dataset, batch_size=config['batch_size'],
                                 shuffle=True, pin_memory=config['pin_memory'])
@@ -156,7 +171,8 @@ class Trainer:
         return out
     
     def save_checkpoint(self):
-        os.makedirs(self.config['out_dir'], exist_ok=True)
+        out_dir = Path(self.config['out_dir'])
+        out_dir.mkdir(parents=True, exist_ok=True)
         checkpoint = {
             'model': self.model.state_dict(),
             'optimiser': self.optimiser.state_dict(),
@@ -165,8 +181,8 @@ class Trainer:
             'best_val_loss': self.best_val_loss,
             'config': self.config
         }
-        print(f"Saving checkpoint to {self.config['out_dir']}\n")
-        torch.save(checkpoint, os.path.join(self.config['out_dir'], 'checkpoint.pt'))
+        print(f"Saving checkpoint to {out_dir}\n")
+        torch.save(checkpoint, out_dir / 'checkpoint_wrap.pt')
     
     def train(self):
         t0 = time.time()
@@ -246,7 +262,7 @@ if __name__ == "__main__":
     always_save_checkpoint = False
     init_from = 'scratch'
     # data
-    dataset = 'tiny_stories'
+    dataset_name = 'tiny_stories'
     gradient_accumulation_steps = 1
     batch_size = 64
     vocab_size = 99
@@ -310,6 +326,12 @@ if __name__ == "__main__":
         wandb.init(project=wandb_project, name=wandb_run_name, config=config)
 
 # ------------------------------------------------------------------------------------------ #
+    module = importlib.import_module(f"data.{dataset_name}.prepare")
+    SimpleEncoding = module.SimpleEncoding
+    BPETokeniserWrapper = module.BPETokeniserWrapper
+    
+    dataset = module.dataset
+    
     model_initialiser = ModelInitialiser(config)
     model, run_time_dict = model_initialiser.init_model()
 

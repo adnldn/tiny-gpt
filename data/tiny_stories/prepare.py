@@ -1,49 +1,82 @@
-from pathlib import Path
-import pickle
 import numpy as np
 from datasets import load_dataset
+from tokenizers import Tokenizer
+from tokenizers.models import BPE
+from tokenizers.trainers import BpeTrainer
+from tokenizers.pre_tokenizers import Whitespace
+import pickle
 
-base_dir = Path(__file__).parent
-train_file_path = base_dir / 'train.bin'
-val_file_path = base_dir / 'val.bin'
-meta_file_path = base_dir / 'meta.pkl'
+
+class SimpleEncoding:
+    def __init__(self, stoi, itos):
+        self.stoi = stoi
+        self.itos = itos
+
+    def get_vocab_size(self):
+        return len(self.itos)
+    
+    def encode(self, text):
+        return [self.stoi.get(ch, self.stoi['<UNK>']) for ch in text]
+    
+    def decode(self, token_ids):
+        return ''.join([self.itos[i] for i in token_ids])
+    
+
+class BPETokeniserWrapper:
+    def __init__(self, tokeniser):
+        self.tokeniser = tokeniser
+    
+    def get_vocab_size(self):
+        return self.tokeniser.get_vocab_size()
+    
+    def encode(self, text):
+        return self.tokeniser.encode(text).ids
+    
+    def decode(self, token_ids):
+        return self.tokeniser.decode(token_ids)
 
 dataset = load_dataset('roneneldan/TinyStories')
-train_size = len(dataset['train']['text'])
-val_size = len(dataset['validation']['text'])
+
+train_size = len(dataset['train'])
+val_size = len(dataset['validation'])
 dataset_size = train_size + val_size
 
-subset_percentage = 100
+data_percentage = 100
 
-train_data = ' '.join(dataset['train']['text'][:train_size * subset_percentage // 100])
-val_data = ' '.join(dataset['validation']['text'][:val_size * subset_percentage // 100])
+sub_train_size = int(len(dataset['train']) * (data_percentage / 100))
+sub_val_size = int(len(dataset['validation']) * (data_percentage / 100))
+train_indices = np.random.choice(train_size, sub_train_size, replace=False).tolist()
+val_indices = np.random.choice(val_size, sub_val_size, replace=False).tolist()
 
-print(f"Training dataset has {len(train_data)} characters")
-print(f"Validation dataset has {len(val_data)} characters")
+train_subset = dataset['train'].select(train_indices)
+val_subset = dataset['validation'].select(val_indices)
 
-chars = sorted(set(train_data + val_data))
-vocab_size = len(chars)
-print("Vocabulary consist of: " + ''.join(chars))
-print(f"There are {vocab_size} unique characters")
+if data_percentage < 100:
+    dataset = {'train': train_subset, 'validation': val_subset}
 
-stoi = {ch:i for i, ch in enumerate(chars)}
-itos = {i:ch for i, ch in enumerate(chars)}
-encode = lambda input_string: list(map(stoi.get, input_string))
-decode = lambda encoded_ints: ''.join(map(itos.get, encoded_ints))
+if __name__ == '__main__':
+    encoding_type = 'simple'
+    if encoding_type == 'simple':
+        # simple character level encoding
+        chars = [chr(i) for i in range(256)]
+        stoi = {ch:i for i, ch in enumerate(chars)}
+        itos = {i:ch for i, ch in enumerate(chars)}
+        stoi['<UNK>'] = -1
+        itos[-1] = '<UNK>'
+        encoding = SimpleEncoding(stoi, itos)
+        with open('data/tiny_stories/tokeniser.pkl', 'wb') as f:
+            pickle.dump(encoding, f)
+    elif encoding_type == 'bpe':
+        # BPE
+        tokeniser = Tokenizer(BPE())
+        tokeniser.pre_tokenizer = Whitespace()
+        trainer = BpeTrainer(special_tokens=["<PAD>", "<UNK>", "<SOS>", "<EOS>"])
+        train_text = [story for story in dataset['train']['text']]
+        val_text = [story for story in dataset['validation']['text']]
+        text_data = train_text + val_text
+        tokeniser.train_from_iterator(text_data, trainer=trainer)
+        encoding = BPETokeniserWrapper(tokeniser)
+        with open("data/tiny_stories/tokeniser.pkl", 'wb') as f:
+            pickle.dump(encoding, f)
 
-train_ids = encode(train_data)
-val_ids = encode(val_data)
-print(f"The training data has {len(train_ids)} tokens")
-print(f"The validation data has {len(val_ids)} tokens")
-
-np.array(train_ids, dtype=np.uint16).tofile(train_file_path)
-np.array(val_ids, dtype=np.uint16).tofile(val_file_path)
-
-meta = {
-    'vocab_size': vocab_size,
-    'itos': itos,
-    'stoi': stoi,
-}
-
-with meta_file_path.open('wb') as f:
-    pickle.dump(meta, f)
+    print(f"There are {encoding.get_vocab_size()} unique characters in the {encoding_type} encoding")

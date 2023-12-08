@@ -1,8 +1,12 @@
 import os
 import pickle
+from pathlib import Path
+import importlib
 from contextlib import nullcontext
 import torch
+import tiktoken
 from model import GPTConfig, GPT
+from train import Encoding
 from config_parser import parse_config, override_globals
 
 
@@ -44,7 +48,7 @@ class ModelRunner:
     def load_model(self):
         checkpoint = None
         if self.init_from == 'resume':
-            checkpoint_path = os.path.join(self.out_dir, 'checkpoint.pt')
+            checkpoint_path = Path(self.out_dir) / 'checkpoint_wrap.pt'
             checkpoint = torch.load(checkpoint_path, map_location=self.device)
             gptconf = GPTConfig(**checkpoint['model_args'])
             model = GPT(gptconf)
@@ -54,7 +58,7 @@ class ModelRunner:
                             else k: v for k, v in checkpoint['model'].items()}
             model.load_state_dict(state_dict)
         elif self.init_from == 'scratch': #  get's checkpoints model args but not the state_dict
-            checkpoint_path = os.path.join(self.out_dir, 'checkpoint.pt')
+            checkpoint_path = Path(self.out_dir) / 'checkpoint.pt'
             checkpoint = torch.load(checkpoint_path, map_location=self.device)
             gptconf = GPTConfig(**checkpoint['model_args'])
             model = GPT(gptconf)
@@ -66,21 +70,19 @@ class ModelRunner:
 
     def load_meta(self):
         # temporarily added 'scratch' to sample from an untrained model
-        if self.init_from == 'resume' or self.init_from == 'scratch' and 'config' in self.checkpoint and 'dataset' in self.checkpoint['config']:
-            meta_path = os.path.join('data', self.checkpoint['config']['dataset'], 'meta.pkl')
+        if self.init_from == 'resume' or self.init_from == 'scratch' and 'config' in self.checkpoint and 'dataset_name' in self.checkpoint['config']:
             try:
-                with open(meta_path, 'rb') as f:
-                    meta = pickle.load(f)
-                print(f"Loaded meta from {meta_path}")
+                module = importlib.import_module(f"data.{self.checkpoint['config']['dataset_name']}.prepare")
+                meta = module.meta
             except:
-                raise ValueError("No meta.pkl found.")
+                raise ValueError("No meta found.")
             return meta
     
-    def load_encoder_decoder(self, meta):
-        stoi, itos = meta['stoi'], meta['itos']
-        encode = lambda input_string: list(map(stoi.get, input_string))
-        decode = lambda encoded_ints: ''.join(map(itos.get, encoded_ints))
-        return encode, decode
+    def load_encoder_decoder(self):
+        tokeniser_path = Path('data') / self.checkpoint['config']['dataset_name'] / 'tokeniser.pkl'
+        with open(tokeniser_path, 'rb') as f:
+            tokeniser = pickle.load(f)
+        return tokeniser.encode, tokeniser.decode
 
     def generate_samples(self):
         with torch.no_grad():
