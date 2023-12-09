@@ -31,9 +31,12 @@ class BPETokeniserWrapper:
         return self.tokeniser.get_vocab_size()
     
     def encode(self, text):
-        return self.tokeniser.encode(text).ids
+        encoded_text = self.tokeniser.encode(text).ids
+        encoded_text = [id if id in self.tokeniser.get_vocab() else self.tokeniser.token_to_id('<UNK>') for id in encoded_text]
+        return encoded_text
     
     def decode(self, token_ids):
+        token_ids = [id if id != self.tokeniser.token_to_id('<UNK>') else '<UNK>' for id in token_ids]
         return self.tokeniser.decode(token_ids)
     
 
@@ -61,7 +64,7 @@ if __name__ == '__main__':
     
     if encoding_type == 'simple':
         # simple character level encoding
-        chars = [chr(i) for i in range(256)]
+        chars = [chr(i) for i in range(256)] + ['<SOS>', '<EOS>']
         stoi = {ch:i for i, ch in enumerate(chars)}
         itos = {i:ch for i, ch in enumerate(chars)}
         stoi['<UNK>'] = -1
@@ -73,7 +76,7 @@ if __name__ == '__main__':
         # BPE
         tokeniser = Tokenizer(BPE())
         tokeniser.pre_tokenizer = Whitespace()
-        trainer = BpeTrainer(special_tokens=["<PAD>", "<UNK>", "<SOS>", "<EOS>"])
+        trainer = BpeTrainer(special_tokens=['<PAD>', '<UNK>', '<SOS>', '<EOS>'])
         train_text = [story for story in dataset['train']['text']]
         val_text = [story for story in dataset['validation']['text']]
         text_data = train_text + val_text

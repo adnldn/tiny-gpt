@@ -1,12 +1,9 @@
-import os
 import pickle
 from pathlib import Path
 import importlib
 from contextlib import nullcontext
 import torch
-import tiktoken
 from model import GPTConfig, GPT
-from train import Encoding
 from config_parser import parse_config, override_globals
 
 
@@ -33,8 +30,7 @@ class ModelRunner:
         self.ctx = torch.amp.autocast(device_type=self.config['device'], dtype=ptdtype) if self.config['device'] == 'cuda' else nullcontext()
 
         self.model, self.checkpoint = self.load_model()
-        self.meta = self.load_meta()
-        self.encode, self.decode = self.load_encoder_decoder(self.meta)
+        self.encode, self.decode = self.load_encoder_decoder()
         self.x = self.prepare_input()
 
     def prepare_input(self):
@@ -48,7 +44,7 @@ class ModelRunner:
     def load_model(self):
         checkpoint = None
         if self.init_from == 'resume':
-            checkpoint_path = Path(self.out_dir) / 'checkpoint_wrap.pt'
+            checkpoint_path = Path(self.out_dir) / 'checkpoint.pt'
             checkpoint = torch.load(checkpoint_path, map_location=self.device)
             gptconf = GPTConfig(**checkpoint['model_args'])
             model = GPT(gptconf)
@@ -68,16 +64,6 @@ class ModelRunner:
             model = torch.compile(model)
         return model, checkpoint
 
-    def load_meta(self):
-        # temporarily added 'scratch' to sample from an untrained model
-        if self.init_from == 'resume' or self.init_from == 'scratch' and 'config' in self.checkpoint and 'dataset_name' in self.checkpoint['config']:
-            try:
-                module = importlib.import_module(f"data.{self.checkpoint['config']['dataset_name']}.prepare")
-                meta = module.meta
-            except:
-                raise ValueError("No meta found.")
-            return meta
-    
     def load_encoder_decoder(self):
         tokeniser_path = Path('data') / self.checkpoint['config']['dataset_name'] / 'tokeniser.pkl'
         with open(tokeniser_path, 'rb') as f:
@@ -97,8 +83,9 @@ class ModelRunner:
 
 if __name__ == "__main__":
     init_from = 'resume'
+    dataset_name = 'tiny_stories'
     out_dir = 'out'
-    start = '\n' # or 'FILE:/path/to/desired/file.txt'
+    start = '<SOS>' # or 'FILE:/path/to/desired/file.txt'
     num_samples = 10
     max_new_tokens = 500
     temperature = 0.8
@@ -128,6 +115,10 @@ if __name__ == "__main__":
         device_type = device
 
     config = {k: v for k, v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str, torch.device))}
+
+    module = importlib.import_module(f"data.{dataset_name}.prepare")
+    SimpleEncoding = module.SimpleEncoding
+    BPETokeniserWrapper = module.BPETokeniserWrapper
 
     runner = ModelRunner(config)
     runner.run()

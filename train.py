@@ -6,15 +6,13 @@ from contextlib import nullcontext
 import importlib
 from pathlib import Path
 # built-ins
-# import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
 from torch.optim.lr_scheduler import LambdaLR, CosineAnnealingLR
-# from tokenizers import Tokenizer
 # custom modules
 from model import GPT, GPTConfig
 from config_parser import parse_config, override_globals
-    
+
 
 class LLM_Dataset(Dataset):
     def __init__(self, data, block_size, tokeniser):
@@ -26,11 +24,11 @@ class LLM_Dataset(Dataset):
         return len(self.data)
     
     def __getitem__(self, idx):
-        story = self.data[idx]
+        story = "<SOS>" + self.data[idx] + "<EOS>"
         encoded_story = self.tokeniser.encode(story)
         next_idx = (idx + 1) % len(self.data)
         while len(encoded_story) < self.block_size + 1 :
-            next_story = self.data[next_idx]
+            next_story = "<SOS>" + self.data[next_idx] + "<EOS>"
             encoded_next_story = self.tokeniser.encode(next_story)
             encoded_story += encoded_next_story
             next_idx = (next_idx + 1) % len(self.data)
@@ -44,24 +42,21 @@ class LLM_Dataset(Dataset):
 class ModelInitialiser:
     def __init__(self, config):
         self.config = config
-        keys = ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size'] #  default vocab size atm
-        self.model_args = {k: self.config[k] for k in keys}
-        print('\n'.join([f'{k}: {v}' for k, v in self.model_args.items()]))
         
     def init_model(self):
         run_time_dict = None
         tokeniser_path = Path('data') / self.config['dataset_name'] / 'tokeniser.pkl'
         with open(tokeniser_path, 'rb') as f:
             tokeniser = pickle.load(f)
-            
         vocab_size = tokeniser.get_vocab_size()
-        self.model_args['vocab_size'] = vocab_size
         self.config['vocab_size'] = vocab_size
-        print(f"vocab_size {self.model_args['vocab_size']}\n")
+        keys = ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size'] #  default vocab size atm
+        model_args = {k: self.config[k] for k in keys}
+        print('\n'.join([f'{k}: {v}' for k, v in model_args.items()]))
 
         if self.config['init_from'] == 'scratch':
             print("Training model from scratch.\n")
-            gpt_config = GPTConfig(**self.model_args)
+            gpt_config = GPTConfig(**model_args)
             model = GPT(gpt_config)
         elif self.config['init_from'] == 'resume':
             # load checkpoint data
@@ -73,9 +68,9 @@ class ModelInitialiser:
                 'best_val_loss': checkpoint['best_val_loss'] 
             }
             keys = ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']
-            self.model_args.update({k: checkpoint['model_args'][k] for k in keys})
+            model_args.update({k: checkpoint['model_args'][k] for k in keys})
             # init model
-            gpt_config = GPTConfig(**self.model_args)
+            gpt_config = GPTConfig(**model_args)
             model = GPT(gpt_config)
             compile_prefix = '_orig_mod.' #  added when model is torch.compile()'d; removed to load into non-compiled model
             state_dict = {k[len(compile_prefix):] if k.startswith(compile_prefix) 
@@ -89,7 +84,7 @@ class ModelInitialiser:
             # unoptimised_model = model
             model = torch.compile(model)
 
-        return model, run_time_dict
+        return model, run_time_dict, self.config
 
 
 def configure_optimiser(model, config, run_time_dict):
@@ -115,7 +110,6 @@ def setup_schedulers(optimiser, config):
     min_lambda = lambda iter: config['min_lr'] / config['learning_rate'] #  outputs lr_coef. Therefore, divide by base_lr to set lr = min_lr
     min_scheduler = LambdaLR(optimiser, min_lambda) #  outputs lr. 
     return warmup_scheduler, decay_scheduler, min_scheduler
-
 
 def load_data(config):
     tokeniser_path = Path('data') / config['dataset_name'] / 'tokeniser.pkl'
@@ -182,7 +176,7 @@ class Trainer:
             'config': self.config
         }
         print(f"Saving checkpoint to {out_dir}\n")
-        torch.save(checkpoint, out_dir / 'checkpoint_wrap.pt')
+        torch.save(checkpoint, out_dir / 'checkpoint.pt')
     
     def train(self):
         t0 = time.time()
@@ -265,7 +259,6 @@ if __name__ == "__main__":
     dataset_name = 'tiny_stories'
     gradient_accumulation_steps = 1
     batch_size = 64
-    vocab_size = 99
     # model
     block_size = 256
     n_layer = 8
@@ -333,7 +326,7 @@ if __name__ == "__main__":
     dataset = module.dataset
     
     model_initialiser = ModelInitialiser(config)
-    model, run_time_dict = model_initialiser.init_model()
+    model, run_time_dict, config = model_initialiser.init_model()
 
     optimiser = configure_optimiser(model, config, run_time_dict)
 
