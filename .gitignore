@@ -169,6 +169,7 @@ meta.pkl
 train.bin
 val.bin
 out-tiny-stories
+tokeniser.pkl
 
 # wandb logging
 wandb/
