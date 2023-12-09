@@ -32,11 +32,11 @@ class BPETokeniserWrapper:
     
     def encode(self, text):
         encoded_text = self.tokeniser.encode(text).ids
-        encoded_text = [id if id in self.tokeniser.get_vocab() else self.tokeniser.token_to_id('<UNK>') for id in encoded_text]
+        # encoded_text = [id if id in self.tokeniser.get_vocab() else self.tokeniser.token_to_id('<UNK>') for id in encoded_text]
         return encoded_text
     
     def decode(self, token_ids):
-        token_ids = [id if id != self.tokeniser.token_to_id('<UNK>') else '<UNK>' for id in token_ids]
+        # token_ids = [id if id != self.tokeniser.token_to_id('<UNK>') else '<UNK>' for id in token_ids]
         return self.tokeniser.decode(token_ids)
     
 
